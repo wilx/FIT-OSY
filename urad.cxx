@@ -1,12 +1,11 @@
 #ifndef __PROGTEST__
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <pthread.h>
 #include <semaphore.h>
-#include <cassert>
-#include <cstdlib>
-#include <iostream>
-#include <iomanip>
+#include <unistd.h>
 
 #define AGENDA_ID              0x01
 #define AGENDA_CAR             0x02
@@ -58,17 +57,7 @@ typedef struct TOffice
     int                     * m_ClerkAgenda;    /* any combination of AGENDA_ID/CAR/TAX, m_ClerkNr long */
 } TOFFICE;
 
-
-#define xassert(X) assert(X)
-#define log(X) do { std::cerr << X; } while (0)
-//#define log(X) /*empty*/
-
-#else
-#define xassert(X) do {/*empty*/} while (0)
-#define log(X) do {/*empty*/} while (0)
-
 #endif /* __PROGTEST__ */
-
 
 template <typename T>
 void
@@ -77,15 +66,6 @@ xswap (T & a, T & b)
     T tmp (a);
     a = b;
     b = tmp;
-}
-
-
-template <typename T>
-void
-xdelete (T * & p)
-{
-    delete p;
-    p = 0;
 }
 
 
@@ -286,7 +266,7 @@ private:
     value_type *
     vec_malloc (size_type count)
     {
-        return static_cast<value_type *>(std::malloc (count * sizeof (value_type)));
+        return static_cast<value_type *>(malloc (count * sizeof (value_type)));
     }
 
 
@@ -363,7 +343,7 @@ public:
     void
     pop_front ()
     {
-        xassert (! empty ());
+        //xassert (! empty ());
 
         --size;
         tail = (tail + 1) % N;
@@ -372,7 +352,7 @@ public:
     void
     push_back (value_type const & item)
     {
-        xassert (! full ());
+        //xassert (! full ());
 
         queue[head] = item;
         head = (head + 1) % N;
@@ -478,13 +458,9 @@ struct PthreadCond
 
 enum Constants
 {
-    QUEUE_LEN = 100
+    QUEUE_LEN = 10000
 };
 
-
-//typedef FixedQueue<TRequestID, QUEUE_LEN> IdRequestQueueType;
-//typedef FixedQueue<TRequestCar, QUEUE_LEN> CarRequestQueueType;
-//typedef FixedQueue<TRequestTax, QUEUE_LEN> TaxRequestQueueType;
 
 typedef FixedQueue<TCitizen *, QUEUE_LEN> CitizenRequestQueueType;
 
@@ -493,8 +469,6 @@ struct Office
 {
     Office (TOffice & o)
         : office (o)
-        , created_items (0)
-        , analyzed_items (0)
         , end_threads (false)
     { }
 
@@ -506,12 +480,6 @@ struct Office
 
     //! Condition variable for queue state change. */
     PthreadCond qcond;
-
-    //! Number of created work items.
-    unsigned created_items;
-
-    //! Number of analyzed work items.
-    unsigned analyzed_items;
 
     //! A flag for consumers indicating that they should exit.
     bool end_threads;
@@ -545,8 +513,8 @@ bool
 get_request (TCitizen * * citizen, bool * was_full,
     CitizenRequestQueueType & queue)
 {
-    xassert (citizen);
-    xassert (was_full);
+    //xassert (citizen);
+    //xassert (was_full);
 
     if (queue.empty ())
 	return false;
@@ -561,7 +529,7 @@ get_request (TCitizen * * citizen, bool * was_full,
 void *
 clerk_thread (void * param)
 {
-    xassert (param);
+    //xassert (param);
 
     ThreadParam & tp = *static_cast<ThreadParam *>(param);
     Office & o = tp.office;
@@ -569,28 +537,28 @@ clerk_thread (void * param)
 
     o.office.m_Register (agenda);
 
-    log ("clerk " << tp.number << " starting" << std::endl);
+    //log ("clerk " << tp.number << " starting" << std::endl);
 
     TCitizen * citizen;
     bool ret;
     bool was_full;
     int status;
 
+    o.qmtx.lock ();
+
     for (;;)
     {
 	ret = false;
 	was_full = false;
-	
-	o.qmtx.lock ();
 
-	log ("clerk " << tp.number << " getting request" << std::endl);
+	//log ("clerk " << tp.number << " getting request" << std::endl);
     
 	if ((agenda & AGENDA_ID) == AGENDA_ID)
 	{
 	    ret = get_request (&citizen, &was_full, o.id_queue);
 	    if (ret)
 	    {
-		log ("clerk " << tp.number << " got ID request" << std::endl);
+		//log ("clerk " << tp.number << " got ID request" << std::endl);
 
 		if (was_full)
 		    o.qcond.broadcast ();
@@ -605,7 +573,7 @@ clerk_thread (void * param)
 	    ret = get_request (&citizen, &was_full, o.car_queue);
 	    if (ret)
 	    {
-		log ("clerk " << tp.number << " got CAR request" << std::endl);
+		//log ("clerk " << tp.number << " got CAR request" << std::endl);
 
 		if (was_full)
 		    o.qcond.broadcast ();
@@ -620,7 +588,7 @@ clerk_thread (void * param)
 	    ret = get_request (&citizen, &was_full, o.tax_queue);
 	    if (ret)
 	    {
-		log ("clerk " << tp.number << " got TAX request" << std::endl);
+                //log ("clerk " << tp.number << " got TAX request" << std::endl);
 
 		if (was_full)
 		    o.qcond.broadcast ();
@@ -635,6 +603,7 @@ clerk_thread (void * param)
 	    // The qmtx lock is NOT held here.
 
 	    o.office.m_CitizenDone (citizen, status);
+            o.qmtx.lock ();
 	    continue;
 	}
 
@@ -753,7 +722,6 @@ ThreadedOffice (TOFFICE * o)
 
     return 0;
 }
-
 
 #ifndef __PROGTEST__
 
