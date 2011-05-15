@@ -60,12 +60,12 @@ typedef struct TOffice
 
 
 #define xassert(X) assert(X)
-//#define log(X) do { std::cerr << X; } while (0)
-#define log(X) /*empty*/
+#define log(X) do { std::cerr << X; } while (0)
+//#define log(X) /*empty*/
 
 #else
-#define xassert(X) /*empty*/
-#define log(X) /*empty*/
+#define xassert(X) do {/*empty*/} while (0)
+#define log(X) do {/*empty*/} while (0)
 
 #endif /* __PROGTEST__ */
 
@@ -529,13 +529,15 @@ struct Office
 
 struct ThreadParam
 {
-    ThreadParam (Office & o, int a)
+    ThreadParam (Office & o, int a, int nr)
         : office (o)
         , agenda (a)
+	, number (nr)
     { }
 
     Office & office;
     int agenda;
+    int number;
 };
 
 
@@ -567,6 +569,8 @@ clerk_thread (void * param)
 
     o.office.m_Register (agenda);
 
+    log ("clerk " << tp.number << " starting" << std::endl);
+
     TCitizen * citizen;
     bool ret;
     bool was_full;
@@ -578,12 +582,16 @@ clerk_thread (void * param)
 	was_full = false;
 	
 	o.qmtx.lock ();
+
+	log ("clerk " << tp.number << " getting request" << std::endl);
     
 	if ((agenda & AGENDA_ID) == AGENDA_ID)
 	{
 	    ret = get_request (&citizen, &was_full, o.id_queue);
 	    if (ret)
 	    {
+		log ("clerk " << tp.number << " got ID request" << std::endl);
+
 		if (was_full)
 		    o.qcond.broadcast ();
 
@@ -597,6 +605,8 @@ clerk_thread (void * param)
 	    ret = get_request (&citizen, &was_full, o.car_queue);
 	    if (ret)
 	    {
+		log ("clerk " << tp.number << " got CAR request" << std::endl);
+
 		if (was_full)
 		    o.qcond.broadcast ();
 
@@ -610,6 +620,8 @@ clerk_thread (void * param)
 	    ret = get_request (&citizen, &was_full, o.tax_queue);
 	    if (ret)
 	    {
+		log ("clerk " << tp.number << " got TAX request" << std::endl);
+
 		if (was_full)
 		    o.qcond.broadcast ();
 
@@ -714,7 +726,7 @@ ThreadedOffice (TOFFICE * o)
     pthreads.resize (o->m_ClerkNr);
     for (i = 0; i != o->m_ClerkNr; ++i)
     {
-        ThreadParam * tp = new ThreadParam (office, o->m_ClerkAgenda[i]);
+        ThreadParam * tp = new ThreadParam (office, o->m_ClerkAgenda[i], i);
         ret = pthread_create (&pthreads[i], NULL, clerk_thread, tp);
         if (ret != 0)
             abort ();
@@ -745,10 +757,81 @@ ThreadedOffice (TOFFICE * o)
 
 #ifndef __PROGTEST__
 
+
+TCITIZEN * dummyCitizenGen ( void )
+{
+    static int count = 50; /* !!! caution here. This global variable is 0 after ThreadedOffice() terminates. !!! */
+    TCITIZEN   * n;
+    if ( count > 0 )
+    {
+	count --;
+	n = (TCITIZEN *) malloc ( sizeof ( *n ) );
+	n -> m_Agenda = AGENDA_ID;
+	return ( n );
+    }
+    return NULL;
+}
+void dummyCitizenDone ( TCITIZEN        * citizen,
+    int               status )
+{
+    free ( citizen );
+}
+
+int dummyProcessID ( TREQUESTID      * data )
+{
+    sleep ( 1 ); /* processing takes some time */
+    return ( 1 ); /* always ok in this dummy implementation */
+}
+
+int dummyProcessCar ( TREQUESTCAR     * data )
+{
+    sleep ( 2 ); /* processing takes some time */
+    return ( 1 ); /* always ok in this dummy implementation */
+}
+
+int dummyProcessTax ( TREQUESTTAX     * data )
+{
+    sleep ( 5 ); /* processing takes some time */
+    return ( 1 ); /* always ok in this dummy implementation */
+}
+
+int dummyRegister ( int agenda )
+{
+    return ( 1 ); /* always ok in this dummy implementation */
+}
+
+
+void dummyDeregister ( void )
+{
+    /* dummy implementation */
+}
+
+void demo( void )
+{
+    TOFFICE  o;
+    int      agenda[2] = { AGENDA_CAR | AGENDA_TAX | AGENDA_ID,
+			   AGENDA_CAR | AGENDA_TAX | AGENDA_ID};
+    
+    o . m_CitizenGen  = dummyCitizenGen;
+    o . m_CitizenDone = dummyCitizenDone;
+    o . m_ProcessID   = dummyProcessID;  
+    o . m_ProcessCar  = dummyProcessCar; 
+    o . m_ProcessTax  = dummyProcessTax; 
+    o . m_Register    = dummyRegister;   
+    o . m_Deregister  = dummyDeregister; 
+    o . m_ClerkNr     = 2;
+    o . m_ClerkAgenda = agenda;
+    ThreadedOffice ( &o );
+    
+    /* call example: o . m_Register ( AGENDA_LIFTBOY ); */
+}
+
+
+
 int main ()
 {
+    demo();
     
-
     return ( 0 );
 }
 #endif /* __PROGTEST__ */
