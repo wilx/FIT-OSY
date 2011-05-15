@@ -473,16 +473,9 @@ enum Constants
 };
 
 
-
-
 typedef FixedQueue<TRequestID, QUEUE_LEN> IdRequestQueueType;
-IdRequestQueueType id_queue;
-
 typedef FixedQueue<TRequestCar, QUEUE_LEN> CarRequestQueueType;
-CarRequestQueueType car_queue;
-
 typedef FixedQueue<TRequestTax, QUEUE_LEN> TaxRequestQueueType;
-TaxRequestQueueType tax_queue;
 
 
 struct Office
@@ -511,6 +504,15 @@ struct Office
 
     //! A flag for consumers indicating that they should exit.
     bool end_threads;
+
+    //!
+    IdRequestQueueType id_queue;
+
+    //!
+    CarRequestQueueType car_queue;
+
+    //!
+    TaxRequestQueueType tax_queue;
 };
 
 
@@ -641,6 +643,14 @@ xdelete (T * & p)
 }
 
 
+template <typename Req, std::size_t Len>
+bool
+queue_request (FixedQueue<Req, Len> & queue, Req const & req)
+{
+    
+}
+
+
 void
 queue_request (Office & o, TCitizen * req)
 {
@@ -653,6 +663,8 @@ queue_request (Office & o, TCitizen * req)
         o.qmtx.unlock ();
         return;
     }
+
+    
 
     o.qmtx.unlock ();
 }
