@@ -621,11 +621,13 @@ analyst_get_work (AnalystWorkItem * item)
 void *
 clerk_thread (void * param)
 {
+    xassert (param);
     ThreadParam & tp = *static_cast<ThreadParam *>(param);
     Office & o = tp.office;
 
     o.office.m_Register (tp.agenda);
 
+    delete &tp;
     return 0;
 }
 
@@ -640,9 +642,19 @@ xdelete (T * & p)
 
 
 void
-queue_request (TCitizen * req)
+queue_request (Office & o, TCitizen * req)
 {
-    
+    o.qmtx.lock ();
+
+    if (! req)
+    {
+        o.end_threads = true;
+        o.qcond.broadcast ();
+        o.qmtx.unlock ();
+        return;
+    }
+
+    o.qmtx.unlock ();
 }
 
 
@@ -652,12 +664,15 @@ ThreadedOffice (TOFFICE * o)
     int i, ret;
     vec<pthread_t> pthreads;
 
+    Office office (*o);
+
     // Create thread_count analyst threads and one collector thread.
 
     pthreads.resize (o->m_ClerkNr);
     for (i = 0; i != o->m_ClerkNr; ++i)
     {
-        ret = pthread_create (&pthreads[i], NULL, clerk_thread, NULL);
+        ThreadParam * tp = new ThreadParam (office, o->m_ClerkAgenda[i]);
+        ret = pthread_create (&pthreads[i], NULL, clerk_thread, tp);
         if (ret != 0)
             abort ();
     }
@@ -668,7 +683,7 @@ ThreadedOffice (TOFFICE * o)
     do
     {
         citizen = o->m_CitizenGen ();
-        queue_request (citizen);
+        queue_request (office, citizen);
     }        
     while (citizen);
 
