@@ -477,6 +477,8 @@ typedef FixedQueue<TRequestID, QUEUE_LEN> IdRequestQueueType;
 typedef FixedQueue<TRequestCar, QUEUE_LEN> CarRequestQueueType;
 typedef FixedQueue<TRequestTax, QUEUE_LEN> TaxRequestQueueType;
 
+typedef FixedQueue<TCitizen, QUEUE_LEN> CitizenRequestQueueType;
+
 
 struct Office
 {
@@ -506,13 +508,13 @@ struct Office
     bool end_threads;
 
     //!
-    IdRequestQueueType id_queue;
+    CitizenRequestQueueType id_queue;
 
     //!
-    CarRequestQueueType car_queue;
+    CitizenRequestQueueType car_queue;
 
     //!
-    TaxRequestQueueType tax_queue;
+    CitizenRequestQueueType tax_queue;
 };
 
 
@@ -643,29 +645,62 @@ xdelete (T * & p)
 }
 
 
-template <typename Req, std::size_t Len>
+template <typename Req, unsigned Len>
 bool
-queue_request (FixedQueue<Req, Len> & queue, Req const & req)
+queue_request (Office & o, FixedQueue<Req, Len> & queue, Req const & req)
 {
+    o.qmtx.lock ();
+
+    while (queue.full ())
+	o.qcond.wait (o.qmtx);
+
+    queue.push_back (req);
+
+    o.qcond.broadcast ();
+
+    o.qmtx.unlock ();
     
+    return true;
 }
 
 
 void
-queue_request (Office & o, TCitizen * req)
+queue_request (Office & o, TCitizen * citizen)
 {
-    o.qmtx.lock ();
+    // Check for the last request first.
 
-    if (! req)
+    if (! citizen)
     {
+	o.qmtx.lock ();
         o.end_threads = true;
         o.qcond.broadcast ();
         o.qmtx.unlock ();
         return;
     }
 
+    // Pick the right queue for the agenda.
     
-
+    bool ret;
+    switch (citizen->m_Agenda)
+    {
+    case AGENDA_ID:
+	ret = queue_request (o, o.id_queue, *citizen);
+	break;
+	
+    case AGENDA_CAR:
+	ret = queue_request (o, o.car_queue, *citizen);
+	break;
+	
+    case AGENDA_TAX:
+	ret = queue_request (o, o.tax_queue, *citizen);
+	break;
+	
+    default:
+	abort ();
+    }
+    
+    o.qmtx.lock ();
+    
     o.qmtx.unlock ();
 }
 
