@@ -81,6 +81,15 @@ xswap (T & a, T & b)
 
 
 template <typename T>
+void
+xdelete (T * & p)
+{
+    delete p;
+    p = 0;
+}
+
+
+template <typename T>
 class vec
 {
 public:
@@ -473,11 +482,11 @@ enum Constants
 };
 
 
-typedef FixedQueue<TRequestID, QUEUE_LEN> IdRequestQueueType;
-typedef FixedQueue<TRequestCar, QUEUE_LEN> CarRequestQueueType;
-typedef FixedQueue<TRequestTax, QUEUE_LEN> TaxRequestQueueType;
+//typedef FixedQueue<TRequestID, QUEUE_LEN> IdRequestQueueType;
+//typedef FixedQueue<TRequestCar, QUEUE_LEN> CarRequestQueueType;
+//typedef FixedQueue<TRequestTax, QUEUE_LEN> TaxRequestQueueType;
 
-typedef FixedQueue<TCitizen, QUEUE_LEN> CitizenRequestQueueType;
+typedef FixedQueue<TCitizen *, QUEUE_LEN> CitizenRequestQueueType;
 
 
 struct Office
@@ -530,119 +539,110 @@ struct ThreadParam
 };
 
 
-#if 0
-void
-analyst_insert_work (TIMAGE * img)
-{
-    /* Lock the queue.  */
-
-    analyst_qmtx->lock ();
-
-    if (! img)
-    {
-        end_threads = true;
-        analyst_qmtx->unlock ();
-        analyst_qcond_consumer->broadcast ();
-        return;
-    }
-
-    // Insert all combinations of image and DB index into analysts'
-    // queue.
-
-    for (unsigned i = 0; i != db_size; ++i)
-    {
-        log ("inserting work i:" << i << " " << img << std::endl);
-
-        /* Wait for non-full queue.  */
-
-        while (analyst_queue.full ())
-            analyst_qcond_producer->wait (*analyst_qmtx);
-
-        /* Insert item into the queue.  */
-
-        AnalystWorkItem item;
-        item.img = img;
-        item.db_index = i;
-        analyst_queue.push_back (item);
-
-        counters_mtx->lock ();
-        ++created_items;
-        counters_mtx->unlock ();
-    }
-
-    analyst_qmtx->unlock ();
-    analyst_qcond_consumer->signal ();
-}
-
-
-//! Gets work for analysts. This function is called only by analysts.
 bool
-analyst_get_work (AnalystWorkItem * item)
+get_request (TCitizen * * citizen, bool * was_full,
+    CitizenRequestQueueType & queue)
 {
-    /* Lock the queue.  */
+    xassert (citizen);
+    xassert (was_full);
 
-    analyst_qmtx->lock ();
+    if (queue.empty ())
+	return false;
 
-    if (end_threads && analyst_queue.empty ())
-    {
-        analyst_qmtx->unlock ();
-        return false;
-    }
-
-    /* Wait for non-empty queue or end of work.  */
-
-    while (analyst_queue.empty () && ! end_threads)
-        analyst_qcond_consumer->wait (*analyst_qmtx);
-
-    if (end_threads && analyst_queue.empty ())
-    {
-        analyst_qmtx->unlock ();
-        return false;
-    }
-
-    // Remember if the queue was full.
-
-    bool was_full = analyst_queue.full ();
-
-    /* Remove work item from the queue.   */
-
-    *item = analyst_queue.peek_front ();
-    analyst_queue.pop_front ();
-
-    /* Unlock the queue.  */
-
-    analyst_qmtx->unlock ();
-
-    /* Signal the producer that the queue is not full anymore.  */
-
-    if (was_full)
-        analyst_qcond_producer->signal ();
+    *was_full = queue.full ();
+    *citizen = queue.peek_front ();
+    queue.pop_front ();
 
     return true;
 }
-#endif
 
 void *
 clerk_thread (void * param)
 {
     xassert (param);
+
     ThreadParam & tp = *static_cast<ThreadParam *>(param);
     Office & o = tp.office;
+    int const & agenda = tp.agenda;
 
-    o.office.m_Register (tp.agenda);
+    o.office.m_Register (agenda);
+
+    TCitizen * citizen;
+    bool ret;
+    bool was_full;
+    int status;
+
+    for (;;)
+    {
+	ret = false;
+	was_full = false;
+	
+	o.qmtx.lock ();
+    
+	if ((agenda & AGENDA_ID) == AGENDA_ID)
+	{
+	    ret = get_request (&citizen, &was_full, o.id_queue);
+	    if (ret)
+	    {
+		if (was_full)
+		    o.qcond.broadcast ();
+
+		o.qmtx.unlock ();
+		status = o.office.m_ProcessID (&citizen->m_Req.m_ID);
+	    }
+	}
+
+	if (! ret && (agenda & AGENDA_CAR) == AGENDA_CAR)
+	{
+	    ret = get_request (&citizen, &was_full, o.car_queue);
+	    if (ret)
+	    {
+		if (was_full)
+		    o.qcond.broadcast ();
+
+		o.qmtx.unlock ();
+		status = o.office.m_ProcessCar (&citizen->m_Req.m_Car);
+	    }
+	}
+
+	if (! ret && (agenda & AGENDA_TAX) == AGENDA_TAX)
+	{
+	    ret = get_request (&citizen, &was_full, o.tax_queue);
+	    if (ret)
+	    {
+		if (was_full)
+		    o.qcond.broadcast ();
+
+		o.qmtx.unlock ();
+		status = o.office.m_ProcessTax (&citizen->m_Req.m_Tax);
+	    }
+	}
+
+	if (ret)
+	{
+	    // The qmtx lock is NOT held here.
+
+	    o.office.m_CitizenDone (citizen, status);
+	    continue;
+	}
+
+	// The qmtx lock IS held here.
+	
+	if (o.end_threads)
+	{
+	    o.qmtx.unlock ();
+	    break;
+	}
+
+	o.qcond.wait (o.qmtx);
+    }
+
+    o.office.m_Deregister ();
 
     delete &tp;
     return 0;
 }
 
-
-template <typename T>
-void
-xdelete (T * & p)
-{
-    delete p;
-    p = 0;
-}
 
 
 template <typename Req, unsigned Len>
@@ -684,24 +684,20 @@ queue_request (Office & o, TCitizen * citizen)
     switch (citizen->m_Agenda)
     {
     case AGENDA_ID:
-	ret = queue_request (o, o.id_queue, *citizen);
+	ret = queue_request (o, o.id_queue, citizen);
 	break;
 	
     case AGENDA_CAR:
-	ret = queue_request (o, o.car_queue, *citizen);
+	ret = queue_request (o, o.car_queue, citizen);
 	break;
 	
     case AGENDA_TAX:
-	ret = queue_request (o, o.tax_queue, *citizen);
+	ret = queue_request (o, o.tax_queue, citizen);
 	break;
 	
     default:
 	abort ();
     }
-    
-    o.qmtx.lock ();
-    
-    o.qmtx.unlock ();
 }
 
 
@@ -745,9 +741,6 @@ ThreadedOffice (TOFFICE * o)
 
     return 0;
 }
-
-
-
 
 
 #ifndef __PROGTEST__
